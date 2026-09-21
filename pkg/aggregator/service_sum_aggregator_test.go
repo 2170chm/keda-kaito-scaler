@@ -140,11 +140,11 @@ func TestSumAggregator_Aggregate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			val, err := agg.Aggregate(tt.snapshot, AggregateInput{
-					MetricName: tt.metricName,
-					Threshold:  tt.threshold,
+				MetricName: tt.metricName,
+				Threshold:  tt.threshold,
 			})
 			if tt.wantErr {
-					assert.Error(t, err)
+				assert.Error(t, err)
 				return
 			}
 			assert.NoError(t, err)
