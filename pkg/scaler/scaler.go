@@ -42,6 +42,7 @@ const (
 
 	reasonMetricsUnavailable      = "MetricsUnavailable"
 	reasonMetricAggregationFailed = "MetricAggregationFailed"
+	reasonEPPPodsUnavailable      = "EPPPodsUnavailable"
 
 	// Defaults applied when the corresponding metadata key is omitted. Only
 	// inferenceSetName/inferenceSetNamespace/metricName remain always mandatory;
@@ -272,8 +273,11 @@ func (e *KaitoScaler) GetMetrics(ctx context.Context, gmr *externalscaler.GetMet
 	}
 	if scalerConfig.MetricSource == metricsource.EPPSourceName &&
 		scalerConfig.Aggregation == aggregator.SumAggregatorName && len(snapshot.Services) == 0 {
+		e.eventf(scalerConfig, reasonEPPPodsUnavailable,
+			"No ready Endpoint Picker pods available for selector %s in namespace %s; this is expected temporarily during startup while KAITO creates the first Workspace and Endpoint Picker",
+			metricsource.EPPSelectorDescription(snapshot.InferenceSet.Name), snapshot.InferenceSet.Namespace)
 		return nil, status.Error(codes.Internal, fmt.Sprintf(
-			"no ready Endpoint Picker pods available for selectors %s in namespace %s; "+
+			"no ready Endpoint Picker pods available for selector %s in namespace %s; "+
 				"this is expected temporarily during startup while KAITO creates the first Workspace and Endpoint Picker; "+
 				"if it persists, verify the InferenceSet uses a vLLM preset and the Gateway API Inference Extension is enabled",
 			metricsource.EPPSelectorDescription(snapshot.InferenceSet.Name), snapshot.InferenceSet.Namespace))

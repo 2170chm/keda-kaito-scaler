@@ -442,7 +442,7 @@ func TestKaitoScaler_GetMetrics_EPPSumDisablesCompensation(t *testing.T) {
 	assert.Equal(t, float64(0), sumAgg.threshold)
 }
 
-func TestKaitoScaler_GetMetrics_EmptyEPPReportsSelectors(t *testing.T) {
+func TestKaitoScaler_GetMetrics_EmptyEPPReportsSelector(t *testing.T) {
 	is := newReadyInferenceSet("is1", "ns1", true)
 	eppSource := &stubSource{snapshot: &metricsource.MetricSnapshot{
 		InferenceSet: types.NamespacedName{Namespace: "ns1", Name: "is1"},
@@ -450,9 +450,9 @@ func TestKaitoScaler_GetMetrics_EmptyEPPReportsSelectors(t *testing.T) {
 
 	c := newFakeClient(t, is)
 	cache := NewMetricCache(c, map[string]metricsource.MetricSource{metricsource.EPPSourceName: eppSource})
-	s := NewKaitoScaler(c, cache, map[string]aggregator.Aggregator{
-		aggregator.SumAggregatorName: &stubAggregator{},
-	})
+	recorder := record.NewFakeRecorder(1)
+	s := NewKaitoScalerWithAPIReaderAndRecorder(c, c, cache,
+		map[string]aggregator.Aggregator{aggregator.SumAggregatorName: &stubAggregator{}}, recorder)
 
 	meta := newValidScalerMetadata()
 	meta[constants.MetricSourceInMetadata] = metricsource.EPPSourceName
@@ -463,7 +463,8 @@ func TestKaitoScaler_GetMetrics_EmptyEPPReportsSelectors(t *testing.T) {
 		ScaledObjectRef: &externalscaler.ScaledObjectRef{ScalerMetadata: meta},
 		MetricName:      "inference_pool_per_pod_queue_size",
 	})
-	assert.ErrorContains(t, err, "no ready Endpoint Picker pods available for selectors llm-d-router-gateway=is1-inferencepool-epp or inferencepool=is1-inferencepool-epp in namespace ns1")
+	assert.ErrorContains(t, err, "no ready Endpoint Picker pods available for selector inferencepool=is1-inferencepool-epp in namespace ns1")
+	assert.Contains(t, eventFrom(t, recorder), "Warning EPPPodsUnavailable")
 }
 
 func TestKaitoScaler_GetMetrics_WindowedAvg(t *testing.T) {

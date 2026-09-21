@@ -33,20 +33,12 @@ import (
 
 const (
 	// eppNameSuffix and inferencePoolSuffix mirror the EPP resource naming used
-	// by both KAITO's llm-d-router-gateway chart and the ModelDeployment chart.
+	// by the production-stack ModelDeployment chart.
 	inferencePoolSuffix = "-inferencepool"
 	eppNameSuffix       = "-epp"
 
-	// eppNameTruncateLength mirrors the `trunc 40` in the llm-d-router-gateway
-	// chart (v0.9.0) `_helpers.tpl`. It is reproduced rather than avoided:
-	// the EPP Pods carry no untruncated label naming their InferenceSet, so
-	// there is nothing else to select on.
-	eppNameTruncateLength = 40
-
-	// KAITO's llm-d-router-gateway chart and the ModelDeployment chart use
-	// different selector-label conventions for their EPP Pods.
-	eppNameLabel                = "llm-d-router-gateway"
-	modelDeploymentEPPNameLabel = "inferencepool"
+	// The ModelDeployment chart labels EPP Pods with their InferencePool name.
+	eppNameLabel = "inferencepool"
 
 	// defaultEPPMetricsPort and defaultEPPMetricsPath are the EPP's Prometheus
 	// endpoint as exposed by the chart.
@@ -92,36 +84,15 @@ func (s *EPPSource) Name() string {
 	return EPPSourceName
 }
 
-// EPPName derives the EPP resource name for an InferenceSet, reproducing the
-// llm-d-router-gateway chart's naming exactly.
-//
-// The chart derives its fullname from the InferencePool name, which KAITO builds
-// as `<inferenceset-name>-inferencepool`, then lowercases, trims, truncates to
-// 40 characters and appends "-epp". The truncation is applied before the suffix,
-// matching the chart, so a long InferenceSet name yields the same result here as
-// in the cluster.
-//
-// Mirrors: llm-d-router-gateway v0.9.0 `_helpers.tpl` and KAITO's
-// `pkg/utils/common.go` InferencePoolName.
+// EPPName derives the EPP resource name used as the production-stack
+// ModelDeployment chart's InferencePool label value.
 func EPPName(inferenceSetName string) string {
-	base := strings.ToLower(strings.TrimSpace(inferenceSetName + inferencePoolSuffix))
-	if len(base) > eppNameTruncateLength {
-		base = base[:eppNameTruncateLength]
-	}
-	return base + eppNameSuffix
-}
-
-func modelDeploymentEPPName(inferenceSetName string) string {
 	return strings.TrimSpace(inferenceSetName) + inferencePoolSuffix + eppNameSuffix
 }
 
-// EPPSelectorDescription lists every supported EPP pod selector for an
-// InferenceSet. It is used in diagnostics when neither chart convention finds
-// a ready pod.
+// EPPSelectorDescription returns the EPP pod selector used in diagnostics.
 func EPPSelectorDescription(inferenceSetName string) string {
-	return fmt.Sprintf("%s=%s or %s=%s",
-		eppNameLabel, EPPName(inferenceSetName),
-		modelDeploymentEPPNameLabel, modelDeploymentEPPName(inferenceSetName))
+	return fmt.Sprintf("%s=%s", eppNameLabel, EPPName(inferenceSetName))
 }
 
 // Scrape lists the EPP pods for the InferenceSet and scrapes each one. A
@@ -133,38 +104,23 @@ func EPPSelectorDescription(inferenceSetName string) string {
 // gate on, and even then not until the first Workspace exists. The empty
 // snapshot is passed through so GetMetrics can report the expected selectors.
 func (s *EPPSource) Scrape(ctx context.Context, is *kaitov1beta1.InferenceSet, cfg ScrapeConfig) (*MetricSnapshot, error) {
-	selectors := []map[string]string{
-		{eppNameLabel: EPPName(is.Name)},
-		{modelDeploymentEPPNameLabel: modelDeploymentEPPName(is.Name)},
-	}
-	pods := make([]corev1.Pod, 0)
-	seen := make(map[types.NamespacedName]struct{})
-	for _, selector := range selectors {
-		podList := &corev1.PodList{}
-		if err := s.kubeClient.List(ctx, podList,
-			client.InNamespace(is.Namespace),
-			client.MatchingLabels(selector),
-		); err != nil {
-			return nil, fmt.Errorf("failed to list EPP pods for InferenceSet %s/%s using selector %v: %w", is.Namespace, is.Name, selector, err)
-		}
-		for i := range podList.Items {
-			key := types.NamespacedName{Namespace: podList.Items[i].Namespace, Name: podList.Items[i].Name}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			pods = append(pods, podList.Items[i])
-		}
+	podList := &corev1.PodList{}
+	selector := map[string]string{eppNameLabel: EPPName(is.Name)}
+	if err := s.kubeClient.List(ctx, podList,
+		client.InNamespace(is.Namespace),
+		client.MatchingLabels(selector),
+	); err != nil {
+		return nil, fmt.Errorf("failed to list EPP pods for InferenceSet %s/%s using selector %v: %w", is.Namespace, is.Name, selector, err)
 	}
 
 	snap := &MetricSnapshot{
 		InferenceSet: types.NamespacedName{Namespace: is.Namespace, Name: is.Name},
 		ScrapedAt:    time.Now(),
-		Services:     make([]ServiceMetrics, 0, len(pods)),
+		Services:     make([]ServiceMetrics, 0, len(podList.Items)),
 	}
 
-	for i := range pods {
-		pod := &pods[i]
+	for i := range podList.Items {
+		pod := &podList.Items[i]
 		// A pod that is not Running, or has no IP yet, has nothing to scrape.
 		// Including it would record a connection error and make a healthy fleet
 		// look partially broken during a rollout.

@@ -53,9 +53,7 @@ func newEPPPodWithLabels(name, namespace string, labels map[string]string, podIP
 }
 
 // The derived name is the only handle on the EPP pods, so it has to reproduce
-// the chart's naming byte for byte. These cases are written against the
-// documented chart behaviour (lowercase, trim, `trunc 40`, then "-epp"), not
-// against the implementation.
+// the production-stack ModelDeployment chart's label value byte for byte.
 func TestEPPName(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -63,35 +61,19 @@ func TestEPPName(t *testing.T) {
 		want             string
 	}{
 		{
-			name:             "short name is suffixed only",
+			name:             "name is suffixed",
 			inferenceSetName: "phi-4-mini",
 			want:             "phi-4-mini-inferencepool-epp",
 		},
 		{
-			name:             "uppercase is lowered",
-			inferenceSetName: "Phi-4-Mini",
+			name:             "surrounding whitespace is trimmed",
+			inferenceSetName: " phi-4-mini ",
 			want:             "phi-4-mini-inferencepool-epp",
 		},
 		{
-			// "abcdefghij" x2 + "-inferencepool" = 34 characters, so nothing is
-			// cut and the boundary stays untested by the shorter cases above.
-			name:             "exactly at the truncation boundary is untouched",
-			inferenceSetName: strings.Repeat("a", 26),
-			want:             strings.Repeat("a", 26) + "-inferencepool-epp",
-		},
-		{
-			// 27 + len("-inferencepool")==14 is 41, one over the limit, so the
-			// pool suffix loses its trailing "l" before "-epp" is appended.
-			name:             "one character over the boundary loses a character",
-			inferenceSetName: strings.Repeat("a", 27),
-			want:             strings.Repeat("a", 27) + "-inferencepoo" + "-epp",
-		},
-		{
-			// A long name is cut mid-name, so the truncated result no longer
-			// contains the pool suffix at all.
-			name:             "long name is truncated to 40 before the suffix",
+			name:             "long name is not truncated",
 			inferenceSetName: strings.Repeat("b", 60),
-			want:             strings.Repeat("b", 40) + "-epp",
+			want:             strings.Repeat("b", 60) + "-inferencepool-epp",
 		},
 	}
 
@@ -99,7 +81,6 @@ func TestEPPName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := EPPName(tt.inferenceSetName)
 			assert.Equal(t, tt.want, got)
-			assert.LessOrEqual(t, len(got), eppNameTruncateLength+len(eppNameSuffix))
 		})
 	}
 }
@@ -162,30 +143,6 @@ inference_pool_per_pod_queue_size{model_server_pod="p3"} 4
 		}
 		assert.Equal(t, float64(5), byName["epp-1"])
 		assert.Equal(t, float64(4), byName["epp-2"])
-	})
-
-	t.Run("discovers ModelDeployment EPP pods", func(t *testing.T) {
-		c := newEPPFakeClient(t,
-			newEPPPodWithLabels("epp-1", "ns1", map[string]string{
-				modelDeploymentEPPNameLabel: modelDeploymentEPPName(is.Name),
-			}, "10.0.0.1", corev1.PodRunning),
-		)
-		snap, err := newSource(c).Scrape(context.Background(), is, cfg)
-		assert.NoError(t, err)
-		assert.Len(t, snap.Services, 1)
-		assert.Equal(t, "epp-1", snap.Services[0].Name)
-	})
-
-	t.Run("a pod carrying both chart labels is scraped once", func(t *testing.T) {
-		c := newEPPFakeClient(t,
-			newEPPPodWithLabels("epp-1", "ns1", map[string]string{
-				eppNameLabel:                eppName,
-				modelDeploymentEPPNameLabel: modelDeploymentEPPName(is.Name),
-			}, "10.0.0.1", corev1.PodRunning),
-		)
-		snap, err := newSource(c).Scrape(context.Background(), is, cfg)
-		assert.NoError(t, err)
-		assert.Len(t, snap.Services, 1)
 	})
 
 	t.Run("a failing pod is recorded without failing the scrape", func(t *testing.T) {
